@@ -27,6 +27,9 @@ NODE_COUNT = 4
 # nodes will be named <prefix>-master, <prefix>-node1, <prefix>-node2, ...
 NODE_PREFIX = 'gg'
 
+USR_LOCAL_BIN=join('usr', 'local', 'bin')
+SETUP_NODE_SH=join(USR_LOCAL_BIN, 'setup_node.sh')
+
 CFSSL_PROGS_SHA256 = """
 0725a1cca3857392158807b543b75dc6388e2102e8a189792c4da7ac19f750b5  cfssl-bundle
 48685e849565cd7d27ac2daf68faa835a5151fd3feac87c6715bcb92d58dc280  cfssl-certinfo
@@ -75,13 +78,12 @@ sudo /usr/bin/raspi-config --expand-rootfs
 SETUP_SCRIPT = """
 if [[ -e /boot/setup.txt ]] ; then
     tmp=`mktemp`
-    rm -f /boot/setup.txt
+    mv /boot/setup.txt "$tmp"
     
-    sh -x "%(setup_node_sh)s" "$tmp" >/boot/setup.log 2>&1
+    sh -x "/%s" "$tmp" >/boot/setup.log 2>&1
     rm -f "$tmp"
 fi
-
-"""
+""" % SETUP_NODE_SH
 
 
 def absjoin(*params):
@@ -128,8 +130,8 @@ class ClusterSetup:
             self._setup_nodename(master, nodename)
             self._enable_ssh()
             self._setup_cgroups()
-            debug('install cfssl to %s' % absjoin('system', 'usr', 'local', 'bin'))
-            self._copytree(cfssl, absjoin('system', 'usr', 'local', 'bin'))
+            debug('install cfssl to %s' % absjoin('system', USR_LOCAL_BIN))
+            self._copytree(cfssl, absjoin('system', USR_LOCAL_BIN))
             self._init_first_boot(ipadddress, nodename)
 
     def _copytree(self, srcdir, dstdir):
@@ -147,19 +149,19 @@ class ClusterSetup:
 
     def _init_first_boot(self, ipadddress, nodename):
         debug('Prepare first boot in %s' % getcwd())
-        with self._executable(absjoin('system', 'usr', 'local', 'bin', 'setup_node.sh')) as fname:
+        with self._executable(absjoin('system', SETUP_NODE_SH)) as fname:
             self.create_setup_script(fname)
-            with self._executable(absjoin('system', 'etc', 'rc.local')) as rclocal:
-                self.setup_rclocal(rclocal, fname)
+        with self._executable(absjoin('system', 'etc', 'rc.local')) as rclocal:
+            self.setup_rclocal(rclocal)
         self._create_setup_txt(absjoin('boot', 'setup.txt'), ipadddress, nodename)
 
     def create_setup_script(self, setup_node_sh):
         with open(setup_node_sh, 'x') as setup_node:
             print(PKG_SETUP % locals(), file=setup_node)
 
-    def setup_rclocal(self, rc_local, setup_node_sh):
+    def setup_rclocal(self, rc_local):
         with open(rc_local, 'r+') as script:
-            script.write(self._edit(script.read(), SETUP_SCRIPT % locals()))
+            script.write(self._edit(script.read(), SETUP_SCRIPT))
 
     def _create_setup_txt(self, fname, ipadddress, nodename):
         with open(fname, 'w') as setup:
@@ -254,7 +256,7 @@ class ClusterSetup:
             nodes.sort(key=lambda t: t[1], reverse=True)
             yield {'boot': '/dev/mapper/%s' % nodes[0][0], 'system': '/dev/mapper/%s' % nodes[1][0]}
         finally:
-            check_call(('sudo', 'kpartx', '-d', image))
+            check_call(('sudo', 'kpartx', '-d', '-s', image))
 
     @contextmanager
     def _mounted(self, mapping, mountpoint):
